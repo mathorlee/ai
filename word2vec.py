@@ -470,7 +470,7 @@ def train_skipgram(
     min_count: int = 5,
     max_vocab_size: int = 50000,
     batch_size: int = 512,
-    epochs: int = 3,
+    epochs: int = 1,
     initial_lr: float = 0.025,
     save_path: Optional[str] = None,
 ):
@@ -507,8 +507,8 @@ def train_skipgram(
     total_params = sum(p.numel() for p in model.parameters())
     logger.info(f"模型参数量: {total_params:,} (2 × {vocab.vocab_size} × {embed_dim})")
 
-    # 优化器: SGD，论文使用 SGD + 线性学习率衰减
-    optimizer = optim.SGD(model.parameters(), lr=initial_lr)
+    # 优化器: Adam
+    optimizer = optim.Adam(model.parameters(), lr=initial_lr)
 
     # 学习率线性衰减调度器
     total_steps = len(dataloader) * epochs
@@ -572,7 +572,7 @@ def train_cbow(
     min_count: int = 5,
     max_vocab_size: int = 50000,
     batch_size: int = 512,
-    epochs: int = 3,
+    epochs: int = 1,
     initial_lr: float = 0.025,
     save_path: Optional[str] = None,
 ):
@@ -602,7 +602,7 @@ def train_cbow(
     total_params = sum(p.numel() for p in model.parameters())
     logger.info(f"模型参数量: {total_params:,}")
 
-    optimizer = optim.SGD(model.parameters(), lr=initial_lr)
+    optimizer = optim.Adam(model.parameters(), lr=initial_lr)
     total_steps = len(dataloader) * epochs
     scheduler = optim.lr_scheduler.LambdaLR(
         optimizer, lr_lambda=lambda step: max(1e-4, 1.0 - step / total_steps)
@@ -660,7 +660,7 @@ def train_skipgram_hs(
     min_count: int = 5,
     max_vocab_size: int = 50000,
     batch_size: int = 512,
-    epochs: int = 3,
+    epochs: int = 1,
     initial_lr: float = 0.025,
     save_path: Optional[str] = None,
 ):
@@ -699,7 +699,7 @@ def train_skipgram_hs(
     logger.info(f"模型参数量: {total_params:,} "
           f"(W: {vocab.vocab_size}×{embed_dim} + 内部节点: {vocab.num_inner_nodes}×{embed_dim})")
 
-    optimizer = optim.SGD(model.parameters(), lr=initial_lr)
+    optimizer = optim.Adam(model.parameters(), lr=initial_lr)
     total_steps = len(dataloader) * epochs
     scheduler = optim.lr_scheduler.LambdaLR(
         optimizer, lr_lambda=lambda step: max(1e-4, 1.0 - step / total_steps)

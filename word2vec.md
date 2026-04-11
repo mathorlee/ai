@@ -292,3 +292,172 @@ W  的维度: 300 × 10000              → 3,000,000 个参数
 | 训练速度 | 更快 | 更慢 |
 | 低频词效果 | 较差 | **更好** |
 | 适用场景 | 大语料 | 小语料 / 需要捕捉罕见词 |
+
+---
+
+## 三种模型的梯度推导
+
+### 符号约定
+
+- 所有向量为**列向量**
+- $\mathbf{h}$：中心词嵌入向量，$N \times 1$（从 $W$ 中查表得到）
+- $\mathbf{w}'_j$：$W'$ 中第 $j$ 个词的输出嵌入向量，$N \times 1$
+- $\mathbf{v}_n$：Huffman 树内部节点 $n$ 的参数向量，$N \times 1$
+- $\sigma(x) = \frac{1}{1+e^{-x}}$，性质：$\sigma'(x) = \sigma(x)(1-\sigma(x))$，$1 - \sigma(x) = \sigma(-x)$
+
+---
+
+### 1. Skip-gram + Negative Sampling
+
+#### 损失函数
+
+对一个训练样本 (center, context)，正样本为 $w_O$，负样本为 $\{w_{neg_1}, \dots, w_{neg_k}\}$：
+
+$$L = -\log\sigma(\mathbf{w}'^T_O \mathbf{h}) - \sum_{i=1}^{k}\log\sigma(-\mathbf{w}'^T_{neg_i} \mathbf{h})$$
+
+统一写法：令 $d_j = 1$（正样本）或 $d_j = 0$（负样本），集合 $S = \{w_O\} \cup \{w_{neg_1}, \dots, w_{neg_k}\}$：
+
+$$L = -\sum_{j \in S}\Big[d_j \log\sigma(\mathbf{w}'^T_j \mathbf{h}) + (1-d_j)\log\sigma(-\mathbf{w}'^T_j \mathbf{h})\Big]$$
+
+#### 对 $\mathbf{w}'_j$ 求梯度（输出嵌入）
+
+先对正样本项（$d_j = 1$）：
+
+$$\frac{\partial}{\partial \mathbf{w}'_j}\Big[-\log\sigma(\mathbf{w}'^T_j \mathbf{h})\Big] = -\frac{\sigma(\mathbf{w}'^T_j \mathbf{h})(1-\sigma(\mathbf{w}'^T_j \mathbf{h}))}{\sigma(\mathbf{w}'^T_j \mathbf{h})} \cdot \mathbf{h} = -(1-\sigma(\mathbf{w}'^T_j \mathbf{h}))\mathbf{h} = (\sigma(\mathbf{w}'^T_j \mathbf{h}) - 1)\mathbf{h}$$
+
+对负样本项（$d_j = 0$）：
+
+$$\frac{\partial}{\partial \mathbf{w}'_j}\Big[-\log\sigma(-\mathbf{w}'^T_j \mathbf{h})\Big] = -\frac{\sigma(-\mathbf{w}'^T_j \mathbf{h})(1-\sigma(-\mathbf{w}'^T_j \mathbf{h}))}{\sigma(-\mathbf{w}'^T_j \mathbf{h})} \cdot (-\mathbf{h}) = \sigma(\mathbf{w}'^T_j \mathbf{h})\mathbf{h}$$
+
+统一为：
+
+$$\boxed{\frac{\partial L}{\partial \mathbf{w}'_j} = \Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{h}}$$
+
+其中 $d_j = 1$（正样本）或 $d_j = 0$（负样本）。
+
+**直觉**：$\sigma(\mathbf{w}'^T_j \mathbf{h})$ 是模型预测"$j$ 是正样本"的概率，$d_j$ 是标签，梯度正比于"预测 - 标签"，和 logistic regression 完全一样。
+
+#### 对 $\mathbf{h}$ 求梯度（输入嵌入）
+
+同理对 $\mathbf{h}$ 求导（注意 $\mathbf{w}'^T_j \mathbf{h}$ 对 $\mathbf{h}$ 的梯度是 $\mathbf{w}'_j$）：
+
+$$\boxed{\frac{\partial L}{\partial \mathbf{h}} = \sum_{j \in S}\Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{w}'_j}$$
+
+由于 $\mathbf{h} = W$ 的第 $i$ 列（查表），所以：
+
+$$\frac{\partial L}{\partial \mathbf{w}_i} = \frac{\partial L}{\partial \mathbf{h}}$$
+
+#### 更新规则（SGD）
+
+$$\mathbf{w}'_j \leftarrow \mathbf{w}'_j - \eta\Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{h} \quad \forall j \in S$$
+
+$$\mathbf{w}_i \leftarrow \mathbf{w}_i - \eta \sum_{j \in S}\Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{w}'_j$$
+
+> 注意：先用旧的 $\mathbf{w}'_j$ 计算 $\frac{\partial L}{\partial \mathbf{h}}$，再更新 $\mathbf{w}'_j$ 和 $\mathbf{w}_i$。
+
+---
+
+### 2. CBOW + Negative Sampling
+
+#### 损失函数
+
+CBOW 与 Skip-gram NS 的唯一区别在于**隐藏层 $\mathbf{h}$ 的定义**。
+
+CBOW 的 $\mathbf{h}$ 是上下文词向量的平均：
+
+$$\mathbf{h} = \frac{1}{2C}\sum_{m=1}^{2C} \mathbf{w}_{c_m}$$
+
+其中 $c_1, c_2, \dots, c_{2C}$ 是窗口内的 $2C$ 个上下文词索引。
+
+损失函数（预测中心词 $w_O$）：
+
+$$L = -\log\sigma(\mathbf{w}'^T_O \mathbf{h}) - \sum_{i=1}^{k}\log\sigma(-\mathbf{w}'^T_{neg_i} \mathbf{h})$$
+
+形式与 Skip-gram NS 完全相同。
+
+#### 对 $\mathbf{w}'_j$ 求梯度（输出嵌入）
+
+与 Skip-gram NS 完全相同：
+
+$$\boxed{\frac{\partial L}{\partial \mathbf{w}'_j} = \Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{h}}$$
+
+#### 对 $\mathbf{h}$ 求梯度
+
+同样与 Skip-gram NS 形式相同：
+
+$$\frac{\partial L}{\partial \mathbf{h}} = \sum_{j \in S}\Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{w}'_j$$
+
+#### 对上下文词向量 $\mathbf{w}_{c_m}$ 求梯度
+
+由于 $\mathbf{h} = \frac{1}{2C}\sum_m \mathbf{w}_{c_m}$，用链式法则：
+
+$$\boxed{\frac{\partial L}{\partial \mathbf{w}_{c_m}} = \frac{1}{2C} \cdot \frac{\partial L}{\partial \mathbf{h}} = \frac{1}{2C}\sum_{j \in S}\Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{w}'_j}$$
+
+每个上下文词收到**相同**的梯度（均分）。
+
+#### 更新规则（SGD）
+
+$$\mathbf{w}'_j \leftarrow \mathbf{w}'_j - \eta\Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{h} \quad \forall j \in S$$
+
+$$\mathbf{w}_{c_m} \leftarrow \mathbf{w}_{c_m} - \frac{\eta}{2C}\sum_{j \in S}\Big(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j\Big)\mathbf{w}'_j \quad \forall m \in \{1, \dots, 2C\}$$
+
+---
+
+### 3. Skip-gram + Hierarchical Softmax
+
+#### 损失函数
+
+给定中心词 $w_I$（嵌入 $\mathbf{h} = \mathbf{w}_I$），目标上下文词 $w_O$ 在 Huffman 树中的路径为 $n_1, n_2, \dots, n_L$（$L$ 个内部节点），对应方向为 $d_1, d_2, \dots, d_L$（$d_l \in \{+1, -1\}$，+1 = 左，-1 = 右）。
+
+$$P(w_O | w_I) = \prod_{l=1}^{L} \sigma(d_l \cdot \mathbf{v}_{n_l}^T \mathbf{h})$$
+
+损失函数为负对数似然：
+
+$$L = -\log P(w_O | w_I) = -\sum_{l=1}^{L} \log\sigma(d_l \cdot \mathbf{v}_{n_l}^T \mathbf{h})$$
+
+#### 对 $\mathbf{v}_{n_l}$ 求梯度（内部节点向量）
+
+对路径上第 $l$ 步，令 $s_l = d_l \cdot \mathbf{v}_{n_l}^T \mathbf{h}$：
+
+$$\frac{\partial L}{\partial \mathbf{v}_{n_l}} = -\frac{\sigma(s_l)(1-\sigma(s_l))}{\sigma(s_l)} \cdot d_l \cdot \mathbf{h} = -(1 - \sigma(s_l)) \cdot d_l \cdot \mathbf{h}$$
+
+利用 $1 - \sigma(s_l) = \sigma(-s_l) = \sigma(-d_l \cdot \mathbf{v}_{n_l}^T \mathbf{h})$：
+
+$$\boxed{\frac{\partial L}{\partial \mathbf{v}_{n_l}} = -\sigma(-d_l \cdot \mathbf{v}_{n_l}^T \mathbf{h}) \cdot d_l \cdot \mathbf{h}}$$
+
+等价写法（用 $d_l = +1$ 或 $-1$ 展开）：
+
+- $d_l = +1$（左）：梯度 $= (\sigma(\mathbf{v}_{n_l}^T \mathbf{h}) - 1) \cdot \mathbf{h}$
+- $d_l = -1$（右）：梯度 $= \sigma(\mathbf{v}_{n_l}^T \mathbf{h}) \cdot \mathbf{h}$
+
+**直觉**：与 NS 的形式一致，每个内部节点就是一个二分类器，梯度 = (预测概率 - 标签) × 输入。
+
+#### 对 $\mathbf{h}$ 求梯度（输入嵌入）
+
+同理对 $\mathbf{h}$ 求导（$s_l$ 对 $\mathbf{h}$ 的梯度是 $d_l \cdot \mathbf{v}_{n_l}$）：
+
+$$\boxed{\frac{\partial L}{\partial \mathbf{h}} = -\sum_{l=1}^{L}\sigma(-d_l \cdot \mathbf{v}_{n_l}^T \mathbf{h}) \cdot d_l \cdot \mathbf{v}_{n_l}}$$
+
+由于 $\mathbf{h} = \mathbf{w}_I$：
+
+$$\frac{\partial L}{\partial \mathbf{w}_I} = \frac{\partial L}{\partial \mathbf{h}}$$
+
+#### 更新规则（SGD）
+
+$$\mathbf{v}_{n_l} \leftarrow \mathbf{v}_{n_l} + \eta \cdot \sigma(-d_l \cdot \mathbf{v}_{n_l}^T \mathbf{h}) \cdot d_l \cdot \mathbf{h} \quad \forall l \in \{1, \dots, L\}$$
+
+$$\mathbf{w}_I \leftarrow \mathbf{w}_I + \eta \sum_{l=1}^{L}\sigma(-d_l \cdot \mathbf{v}_{n_l}^T \mathbf{h}) \cdot d_l \cdot \mathbf{v}_{n_l}$$
+
+> 注意：先用旧的 $\mathbf{v}_{n_l}$ 累加 $\frac{\partial L}{\partial \mathbf{h}}$，再分别更新 $\mathbf{v}_{n_l}$ 和 $\mathbf{w}_I$。
+
+---
+
+### 梯度公式总结
+
+| 模型 | 对输出参数的梯度 | 对输入嵌入的梯度 |
+|---|---|---|
+| **Skip-gram NS** | $\frac{\partial L}{\partial \mathbf{w}'_j} = (\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j)\mathbf{h}$ | $\frac{\partial L}{\partial \mathbf{w}_I} = \sum_j(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j)\mathbf{w}'_j$ |
+| **CBOW NS** | 同上 | $\frac{\partial L}{\partial \mathbf{w}_{c_m}} = \frac{1}{2C}\sum_j(\sigma(\mathbf{w}'^T_j \mathbf{h}) - d_j)\mathbf{w}'_j$ |
+| **Skip-gram HS** | $\frac{\partial L}{\partial \mathbf{v}_{n_l}} = -\sigma(-d_l \mathbf{v}_{n_l}^T\mathbf{h}) \cdot d_l \cdot \mathbf{h}$ | $\frac{\partial L}{\partial \mathbf{w}_I} = -\sum_l \sigma(-d_l \mathbf{v}_{n_l}^T\mathbf{h}) \cdot d_l \cdot \mathbf{v}_{n_l}$ |
+
+三种模型的梯度本质都是**"预测 - 标签"× 对方向量**的形式，这就是 sigmoid 二分类的标准梯度。
